@@ -1,0 +1,28 @@
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+
+# Build artifacts
+bin
+dist
+
+# Go test outputs
+coverage.out
+coverage.html
+
+# Logs
+*.log
+
+# Environment files
+
+
+# Documentation
+README.md
+
+# OS files
+.DS_Store
+Thumbs.db
