@@ -91,5 +91,34 @@ func ConfigureAlert(c *fiber.Ctx) error {
 	})
 }
 
+func DeleteAlert(c *fiber.Ctx) error {
+	id := c.Params("id")
+	if id == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Missing ID parameter",
+		})
+	}
 
+	alertID, err := uuid.Parse(id)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "invalid alert ID",
+		})
+	}
 
+	result := database.DB.Delete(&models.AlertConfig{}, "id = ?", alertID)
+	if result.Error != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": result.Error.Error(),
+		})
+	}
+	if result.RowsAffected == 0 {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error": "alert rule not found",
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"message": "Alert rule deleted successfully",
+	})
+}
