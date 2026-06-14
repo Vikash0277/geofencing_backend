@@ -18,6 +18,8 @@ coverage.html
 *.log
 
 # Environment files
+.env
+.env.*
 
 
 # Documentation

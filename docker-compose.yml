@@ -26,7 +26,7 @@ services:
     ports:
       - "3001:3001"
     environment:
-      - DATABASE_URL=postgres://postgres:password@db:5432/geofencing?sslmode=disable
+      - DATABASE_URL=${DATABASE_URL}
       - MIGRATION=true
       - JWT_SECRET=${JWT_SECRET}
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
