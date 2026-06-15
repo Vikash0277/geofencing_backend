@@ -23,15 +23,25 @@ type currentGeofence struct {
 }
 
 type geofenceAlertPayload struct {
-	Type          string    `json:"type"`
-	AlertID       uuid.UUID `json:"alert_id"`
-	AlertConfigID uuid.UUID `json:"alert_config_id"`
-	UserID        uuid.UUID `json:"-"`
-	GeofenceID    string    `json:"geofence_id"`
-	VehicleID     string    `json:"vehicle_id"`
-	EventType     string    `json:"event_type"`
-	Timestamp     string    `json:"timestamp"`
-	Message       string    `json:"message"`
+	Type      string `json:"type"`
+	EventID   string `json:"event_id"`
+	EventType string `json:"event_type"`
+	Timestamp string `json:"timestamp"`
+	UserID    string `json:"-"`
+	Vehicle   struct {
+		VehicleID      string `json:"vehicle_id"`
+		VehicleNumber  string `json:"vehicle_number"`
+		DriverName     string `json:"driver_name"`
+	} `json:"vehicle"`
+	Geofence struct {
+		GeofenceID   string `json:"geofence_id"`
+		GeofenceName string `json:"geofence_name"`
+		Category     string `json:"category"`
+	} `json:"geofence"`
+	Location struct {
+		Latitude  float64 `json:"latitude"`
+		Longitude float64 `json:"longitude"`
+	} `json:"location"`
 }
 
 type locationProcessingResult struct {
@@ -183,6 +193,23 @@ func processVehicleLocation(req dto.UpdateLocationRequest, timestamp time.Time) 
 			affected = append(affected, id)
 		}
 
+		type geofenceInfo struct {
+			ID       string
+			Name     string
+			Category string
+		}
+		var gfInfos []geofenceInfo
+		if err := tx.Table("geofences").
+			Select("id, name, category").
+			Where("id IN ?", affected).
+			Scan(&gfInfos).Error; err != nil {
+			return err
+		}
+		gfInfoMap := make(map[string]geofenceInfo, len(gfInfos))
+		for _, info := range gfInfos {
+			gfInfoMap[info.ID] = info
+		}
+
 		var configs []models.AlertConfig
 		if err := tx.
 			Where("geofence_id IN ? AND status = 'active'", affected).
@@ -199,12 +226,15 @@ func processVehicleLocation(req dto.UpdateLocationRequest, timestamp time.Time) 
 				continue
 			}
 
+			gfInfo := gfInfoMap[config.GeofenceID]
+
 			message := fmt.Sprintf(
 				"Vehicle %s triggered %s for geofence %s",
-				req.VehicleID,
+				vehicle.VehicleNumber,
 				eventType,
-				config.GeofenceID,
+				gfInfo.Name,
 			)
+
 			event := models.AlertEvent{
 				AlertConfigID: config.ID,
 				GeofenceID:    config.GeofenceID,
@@ -221,15 +251,36 @@ func processVehicleLocation(req dto.UpdateLocationRequest, timestamp time.Time) 
 			}
 
 			result.Alerts = append(result.Alerts, geofenceAlertPayload{
-				Type:          "geofence_alert",
-				AlertID:       event.ID,
-				AlertConfigID: config.ID,
-				UserID:        config.CreatedBy,
-				GeofenceID:    config.GeofenceID,
-				VehicleID:     req.VehicleID,
-				EventType:     eventType,
-				Timestamp:     timestamp.Format(time.RFC3339),
-				Message:       message,
+				Type:      "geofence_alert",
+				EventID:   event.ID.String(),
+				EventType: eventType,
+				Timestamp: timestamp.Format(time.RFC3339),
+				UserID:    config.CreatedBy.String(),
+				Vehicle: struct {
+					VehicleID      string `json:"vehicle_id"`
+					VehicleNumber  string `json:"vehicle_number"`
+					DriverName     string `json:"driver_name"`
+				}{
+					VehicleID:      req.VehicleID,
+					VehicleNumber:  vehicle.VehicleNumber,
+					DriverName:     vehicle.DriverName,
+				},
+				Geofence: struct {
+					GeofenceID   string `json:"geofence_id"`
+					GeofenceName string `json:"geofence_name"`
+					Category     string `json:"category"`
+				}{
+					GeofenceID:   config.GeofenceID,
+					GeofenceName: gfInfo.Name,
+					Category:     gfInfo.Category,
+				},
+				Location: struct {
+					Latitude  float64 `json:"latitude"`
+					Longitude float64 `json:"longitude"`
+				}{
+					Latitude:  req.Latitude,
+					Longitude: req.Longitude,
+				},
 			})
 		}
 
@@ -241,6 +292,6 @@ func processVehicleLocation(req dto.UpdateLocationRequest, timestamp time.Time) 
 
 func broadcastProcessedAlerts(result locationProcessingResult) {
 	for _, alert := range result.Alerts {
-		BroadcastAlertToUser(alert.UserID.String(), alert)
+		BroadcastAlertToUser(alert.UserID, alert)
 	}
 }

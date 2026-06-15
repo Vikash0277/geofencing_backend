@@ -95,7 +95,7 @@ func WsTrackLocationHandler(c *websocket.Conn) {
 			continue
 		}
 
-		broadcastProcessedAlerts(result)
+		go broadcastProcessedAlerts(result)
 		BroadcastAlertToAll(fiber.Map{
 			"type":              "location_update",
 			"vehicle_id":        req.VehicleID,

@@ -85,44 +85,86 @@ func GetAlertEvents(c *fiber.Ctx) error {
 		limit = parsed
 	}
 
-	type AlertEventResponse struct {
-		AlertID       string    `json:"alert_id"`
-		AlertConfigID string    `json:"alert_config_id"`
-		GeofenceID    string    `json:"geofence_id"`
-		GeofenceName  string    `json:"geofence_name"`
-		VehicleID     string    `json:"vehicle_id"`
-		VehicleNumber string    `json:"vehicle_number"`
-		EventType     string    `json:"event_type"`
-		Message       string    `json:"message"`
-		Latitude      float64   `json:"latitude"`
-		Longitude     float64   `json:"longitude"`
-		Timestamp     time.Time `json:"timestamp"`
+	type alertEventRow struct {
+		EventID       string
+		EventType     string
+		AlertConfigID string
+		GeofenceID    string
+		GeofenceName  string
+		GeofenceCat   string     `gorm:"column:geofence_category"`
+		VehicleID     string
+		VehicleNumber string
+		DriverName    string
+		Latitude      float64
+		Longitude     float64
+		Message       string
+		Timestamp     time.Time
 	}
 
-	var events []AlertEventResponse
-	query := database.DB.
+	var rows []alertEventRow
+	if err := database.DB.
 		Table("alert_events ae").
 		Select(`
-			ae.id AS alert_id,
+			ae.id AS event_id,
+			ae.event_type,
 			ae.alert_config_id,
 			ae.geofence_id,
 			g.name AS geofence_name,
+			g.category AS geofence_category,
 			ae.vehicle_id,
 			v.vehicle_number,
-			ae.event_type,
-			ae.message,
+			v.driver_name,
 			ae.latitude,
 			ae.longitude,
+			ae.message,
 			ae.timestamp
 		`).
 		Joins("LEFT JOIN geofences g ON g.id = ae.geofence_id").
 		Joins("LEFT JOIN vehicles v ON v.id = ae.vehicle_id").
 		Where("ae.user_id = ?", userID).
 		Order("ae.timestamp DESC").
-		Limit(limit)
-
-	if err := query.Scan(&events).Error; err != nil {
+		Limit(limit).
+		Scan(&rows).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	type vehicleInfo struct {
+		VehicleID     string `json:"vehicle_id"`
+		VehicleNumber string `json:"vehicle_number"`
+		DriverName    string `json:"driver_name"`
+	}
+	type geofenceInfo struct {
+		GeofenceID   string `json:"geofence_id"`
+		GeofenceName string `json:"geofence_name"`
+		Category     string `json:"category"`
+	}
+	type locationInfo struct {
+		Latitude  float64 `json:"latitude"`
+		Longitude float64 `json:"longitude"`
+	}
+
+	events := make([]fiber.Map, 0, len(rows))
+	for _, r := range rows {
+		events = append(events, fiber.Map{
+			"event_id":   r.EventID,
+			"event_type": r.EventType,
+			"timestamp":  r.Timestamp,
+			"message":    r.Message,
+			"vehicle": vehicleInfo{
+				VehicleID:     r.VehicleID,
+				VehicleNumber: r.VehicleNumber,
+				DriverName:    r.DriverName,
+			},
+			"geofence": geofenceInfo{
+				GeofenceID:   r.GeofenceID,
+				GeofenceName: r.GeofenceName,
+				Category:     r.GeofenceCat,
+			},
+			"location": locationInfo{
+				Latitude:  r.Latitude,
+				Longitude: r.Longitude,
+			},
+		})
 	}
 
 	return c.JSON(fiber.Map{

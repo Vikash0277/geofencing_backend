@@ -40,7 +40,7 @@ func UpdateVehicleLocation(c *fiber.Ctx) error {
 		return c.Status(status).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	broadcastProcessedAlerts(result)
+	go broadcastProcessedAlerts(result)
 
 	current := make([]fiber.Map, 0, len(result.Current))
 	for _, geofence := range result.Current {
