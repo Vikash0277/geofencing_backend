@@ -2,7 +2,10 @@ package handlers
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"geofencing_backend/database"
 	"geofencing_backend/internal/dto"
@@ -18,18 +21,53 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
+	"gorm.io/gorm"
 )
 
 var googleOauthConfig *oauth2.Config
 
-func InitOauthConfig() {
+const googleOAuthStateCookie = "google_oauth_state"
+
+func InitOauthConfig() error {
+	clientID := os.Getenv("GOOGLE_CLIENT_ID")
+	clientSecret := os.Getenv("GOOGLE_CLIENT_SECRET")
+	redirectURL := os.Getenv("GOOGLE_REDIRECT_URL")
+	if clientID == "" || clientSecret == "" || redirectURL == "" {
+		return fmt.Errorf("Google OAuth environment variables are incomplete")
+	}
+
 	googleOauthConfig = &oauth2.Config{
 		RedirectURL:  os.Getenv("GOOGLE_REDIRECT_URL"),
-		ClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
-		ClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
+		ClientID:     clientID,
+		ClientSecret: clientSecret,
 		Scopes:       []string{"https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/userinfo.profile"},
 		Endpoint:     google.Endpoint,
 	}
+	return nil
+}
+
+func newOAuthState() (string, error) {
+	bytes := make([]byte, 32)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(bytes), nil
+}
+
+func oauthCookieSecure() bool {
+	return strings.HasPrefix(os.Getenv("GOOGLE_REDIRECT_URL"), "https://")
+}
+
+func clearOAuthStateCookie(c *fiber.Ctx) {
+	c.Cookie(&fiber.Cookie{
+		Name:     googleOAuthStateCookie,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HTTPOnly: true,
+		Secure:   oauthCookieSecure(),
+		SameSite: "Lax",
+	})
 }
 
 func generateToken(user models.User) (string, error) {
@@ -162,24 +200,47 @@ func Login(c *fiber.Ctx) error {
 
 func GoogleLogin(c *fiber.Ctx) error {
 	if googleOauthConfig == nil {
-		InitOauthConfig()
+		if err := InitOauthConfig(); err != nil {
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": err.Error()})
+		}
 	}
-	// Note: in a real app, generate a random state string and verify it in the callback
-	url := googleOauthConfig.AuthCodeURL("random_state_string", oauth2.AccessTypeOffline)
+
+	state, err := newOAuthState()
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to initialize Google sign-in"})
+	}
+	c.Cookie(&fiber.Cookie{
+		Name:     googleOAuthStateCookie,
+		Value:    state,
+		Path:     "/",
+		MaxAge:   600,
+		HTTPOnly: true,
+		Secure:   oauthCookieSecure(),
+		SameSite: "Lax",
+	})
+
+	url := googleOauthConfig.AuthCodeURL(state, oauth2.AccessTypeOnline)
 	return c.Redirect(url)
 }
 
 func GoogleCallback(c *fiber.Ctx) error {
 	if googleOauthConfig == nil {
-		InitOauthConfig()
+		if err := InitOauthConfig(); err != nil {
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{"error": err.Error()})
+		}
 	}
 
 	state := c.Query("state")
-	if state != "random_state_string" {
+	expectedState := c.Cookies(googleOAuthStateCookie)
+	clearOAuthStateCookie(c)
+	if state == "" || expectedState == "" || state != expectedState {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid OAuth state"})
 	}
 
 	code := c.Query("code")
+	if code == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Missing Google authorization code"})
+	}
 	token, err := googleOauthConfig.Exchange(context.Background(), code)
 	if err != nil {
 		log.Println("OAuth Exchange Error:", err)
@@ -195,9 +256,10 @@ func GoogleCallback(c *fiber.Ctx) error {
 	defer resp.Body.Close()
 
 	var userInfo struct {
-		ID    string `json:"id"`
-		Email string `json:"email"`
-		Name  string `json:"name"`
+		ID            string `json:"id"`
+		Email         string `json:"email"`
+		Name          string `json:"name"`
+		VerifiedEmail bool   `json:"verified_email"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&userInfo); err != nil {
@@ -205,9 +267,12 @@ func GoogleCallback(c *fiber.Ctx) error {
 	}
 
 	var user models.User
+	if userInfo.Email == "" || !userInfo.VerifiedEmail {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Google account email is not verified"})
+	}
+
 	err = database.DB.Where("email = ?", userInfo.Email).First(&user).Error
-	if err != nil {
-		// User does not exist, create a new one
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		user = models.User{
 			Name:       userInfo.Name,
 			Email:      userInfo.Email,
@@ -217,12 +282,20 @@ func GoogleCallback(c *fiber.Ctx) error {
 		if err := database.DB.Create(&user).Error; err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create user"})
 		}
+	} else if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to look up user"})
 	} else {
-		// User exists, check if provider is google
-		if user.Provider != "google" {
-			// They used local auth before, we can either link accounts or return an error.
-			// Returning an error for simplicity.
-			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "Email already registered with " + user.Provider + " login."})
+		updates := map[string]interface{}{}
+		if user.ProviderID == "" {
+			updates["provider_id"] = userInfo.ID
+		}
+		if user.Name == "" && userInfo.Name != "" {
+			updates["name"] = userInfo.Name
+		}
+		if len(updates) > 0 {
+			if err := database.DB.Model(&user).Updates(updates).Error; err != nil {
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to link Google account"})
+			}
 		}
 	}
 
@@ -231,14 +304,11 @@ func GoogleCallback(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to generate token"})
 	}
 
-	// Build the redirect URL back to the frontend with auth data
-	// Build the redirect URL back to the frontend with token and user data
 	frontendURL := os.Getenv("FRONTEND_URL")
 	if frontendURL == "" {
 		frontendURL = "http://localhost:5173"
 	}
 
-	// Encode user data as JSON and pass via URL query parameters
 	userJSON, _ := json.Marshal(fiber.Map{
 		"id":       user.ID,
 		"name":     user.Name,
@@ -247,6 +317,6 @@ func GoogleCallback(c *fiber.Ctx) error {
 		"provider": user.Provider,
 	})
 
-	redirectURL := fmt.Sprintf("%s?token=%s&user=%s", frontendURL, url.QueryEscape(jwtToken), url.QueryEscape(string(userJSON)))
+	redirectURL := fmt.Sprintf("%s#token=%s&user=%s", frontendURL, url.QueryEscape(jwtToken), url.QueryEscape(string(userJSON)))
 	return c.Redirect(redirectURL)
 }
