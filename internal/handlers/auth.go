@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -46,6 +47,41 @@ func generateToken(user models.User) (string, error) {
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString([]byte(secret))
+}
+
+func userIDFromToken(tokenString string) (string, error) {
+	secret := os.Getenv("JWT_SECRET")
+	if secret == "" {
+		secret = "default_secret"
+	}
+
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		if token.Method != jwt.SigningMethodHS256 {
+			return nil, fmt.Errorf("unexpected signing method")
+		}
+		return []byte(secret), nil
+	})
+	if err != nil || !token.Valid {
+		return "", fmt.Errorf("invalid token")
+	}
+
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return "", fmt.Errorf("invalid token claims")
+	}
+	userID, ok := claims["user_id"].(string)
+	if !ok || userID == "" {
+		return "", fmt.Errorf("missing user_id claim")
+	}
+	return userID, nil
+}
+
+func userIDFromRequest(c *fiber.Ctx) (string, error) {
+	authorization := c.Get("Authorization")
+	if !strings.HasPrefix(authorization, "Bearer ") {
+		return "", fmt.Errorf("missing bearer token")
+	}
+	return userIDFromToken(strings.TrimPrefix(authorization, "Bearer "))
 }
 
 func Register(c *fiber.Ctx) error {

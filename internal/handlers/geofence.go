@@ -16,10 +16,6 @@ func CreateGeofence(c *fiber.Ctx) error {
 
 	var req dto.CreateGeofenceRequest
 
-	log.Println("CreatedBy RAW:", req.CreatedBy)
-	log.Println("coordinates", c.Body())
-
-
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(400).JSON(fiber.Map{
 			"error": "invalid request body",
@@ -61,7 +57,6 @@ func CreateGeofence(c *fiber.Ctx) error {
 		"time_ns": time.Since(start).Nanoseconds(),
 	})
 }
-
 
 type GeofenceRow struct {
 	ID          string
@@ -131,6 +126,10 @@ func DeleteGeofence(c *fiber.Ctx) error {
 	}
 
 	tx := database.DB.Begin()
+	if err := tx.Exec("DELETE FROM alert_events WHERE geofence_id = ?", id).Error; err != nil {
+		tx.Rollback()
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
 	if err := tx.Exec("DELETE FROM alert_configs WHERE geofence_id = ?", id).Error; err != nil {
 		tx.Rollback()
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})

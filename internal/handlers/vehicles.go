@@ -51,7 +51,6 @@ func CreateVehicle(c *fiber.Ctx) error {
 	})
 }
 
-
 func GetVehicles(c *fiber.Ctx) error {
 
 	start := time.Now()
@@ -96,6 +95,10 @@ func DeleteVehicle(c *fiber.Ctx) error {
 	}
 
 	tx := database.DB.Begin()
+	if err := tx.Exec("DELETE FROM alert_events WHERE vehicle_id = ?", id).Error; err != nil {
+		tx.Rollback()
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
 	if err := tx.Exec("DELETE FROM alert_configs WHERE vehicle_id = ?", id).Error; err != nil {
 		tx.Rollback()
 		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
