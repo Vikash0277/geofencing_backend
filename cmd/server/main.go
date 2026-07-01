@@ -3,6 +3,8 @@ package main
 import (
 	"log"
 
+	"os"
+
 	"geofencing_backend/database"
 	"geofencing_backend/internal/routes"
 
@@ -21,8 +23,12 @@ func main() {
 	})
 
 	// Enable CORS
+	frontendURL := os.Getenv("FRONTEND_URL")
+	if frontendURL == "" {
+		frontendURL = "http://localhost:5173"
+	}
 	app.Use(cors.New(cors.Config{
-		AllowOrigins:     "http://localhost:5173",
+		AllowOrigins:     frontendURL + ",http://localhost:5173",
 		AllowHeaders:     "Origin, Content-Type, Accept, Authorization",
 		AllowMethods:     "GET, POST, PUT, DELETE, OPTIONS",
 		AllowCredentials: true,
