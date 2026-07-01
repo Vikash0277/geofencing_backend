@@ -239,10 +239,10 @@ func processVehicleLocation(req dto.UpdateLocationRequest, timestamp time.Time) 
 			)
 
 			event := models.AlertEvent{
-				AlertConfigID: config.ID,
+				AlertConfigID: config.ID.String(),
 				GeofenceID:    config.GeofenceID,
 				VehicleID:     req.VehicleID,
-				UserID:        config.CreatedBy,
+				UserID:        config.CreatedBy.String(),
 				EventType:     eventType,
 				Message:       message,
 				Latitude:      req.Latitude,
