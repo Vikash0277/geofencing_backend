@@ -2,18 +2,15 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"sync"
 	"time"
 
-	"geofencing_backend/database"
 	"geofencing_backend/internal/dto"
-	"geofencing_backend/internal/models"
-	"geofencing_backend/internal/services"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/websocket/v2"
-	"github.com/google/uuid"
 )
 
 var (
@@ -93,125 +90,29 @@ func WsTrackLocationHandler(c *websocket.Conn) {
 			log.Println("Invalid GPS payload from Flutter:", err)
 			continue
 		}
-		// Override vehicle_id from query param (device is authoritative)
 		if req.VehicleID == "" {
 			req.VehicleID = vehicleID
 		}
 
-		// 1. Find previous location to determine geofence entry/exit
-		var lastLocation models.VehicleLocation
-		database.DB.Where("vehicle_id = ?", req.VehicleID).Order("timestamp desc").First(&lastLocation)
-
-		var lastGeofences []string
-		if lastLocation.ID != uuid.Nil {
-			database.DB.Raw(`
-				SELECT id FROM geofences
-				WHERE ST_Contains(
-					ST_GeomFromText(polygon,4326),
-					ST_SetSRID(ST_Point(?,?),4326)
-				)
-			`, lastLocation.Longitude, lastLocation.Latitude).Scan(&lastGeofences)
-		}
-
-		// 2. Save new location
-		point := services.BuildPointWKT(req.Latitude, req.Longitude)
-		location := models.VehicleLocation{
-			VehicleID: req.VehicleID,
-			Latitude:  req.Latitude,
-			Longitude: req.Longitude,
-			Timestamp: time.Now(),
-			Point:     point,
-		}
-		if err := database.DB.Create(&location).Error; err != nil {
-			log.Println("Failed to save WS location:", err)
+		result, err := processVehicleLocation(req, time.Now())
+		if err != nil {
+			if !errors.Is(err, ErrStaleLocation) {
+				log.Println("Failed to process WS location:", err)
+			}
 			continue
 		}
 
-		// 3. Fetch current geofences the point falls inside
-		type GeofenceResult struct {
-			ID   string
-			Name string
-		}
-		var geofences []GeofenceResult
-		database.DB.Raw(`
-			SELECT id, name FROM geofences
-			WHERE ST_Contains(ST_GeomFromText(polygon,4326), ST_SetSRID(ST_Point(?,?),4326))
-		`, req.Longitude, req.Latitude).Scan(&geofences)
+		go broadcastProcessedAlerts(result)
 
-		currentGeofencesMap := make(map[string]bool)
-		for _, g := range geofences {
-			currentGeofencesMap[g.ID] = true
-		}
-		lastGeofencesMap := make(map[string]bool)
-		for _, id := range lastGeofences {
-			lastGeofencesMap[id] = true
-		}
-
-		var enteredGeofences []string
-		var exitedGeofences []string
-		for id := range currentGeofencesMap {
-			if !lastGeofencesMap[id] {
-				enteredGeofences = append(enteredGeofences, id)
-			}
-		}
-		for id := range lastGeofencesMap {
-			if !currentGeofencesMap[id] {
-				exitedGeofences = append(exitedGeofences, id)
-			}
-		}
-
-		// 4. Trigger geofence alerts
-		allAffected := append(enteredGeofences, exitedGeofences...)
-		if len(allAffected) > 0 {
-			var configs []models.AlertConfig
-			database.DB.Where("geofence_id IN ? AND status = 'active'", allAffected).Find(&configs)
-			for _, cfg := range configs {
-				if cfg.VehicleID != nil && *cfg.VehicleID != req.VehicleID {
-					continue
-				}
-				isEntry := false
-				isExit := false
-				for _, id := range enteredGeofences {
-					if cfg.GeofenceID == id { isEntry = true; break }
-				}
-				for _, id := range exitedGeofences {
-					if cfg.GeofenceID == id { isExit = true; break }
-				}
-				triggeredEventType := ""
-				if isEntry && (cfg.EventType == "entry" || cfg.EventType == "both") {
-					triggeredEventType = "entry"
-				} else if isExit && (cfg.EventType == "exit" || cfg.EventType == "both") {
-					triggeredEventType = "exit"
-				}
-				if triggeredEventType != "" {
-					alertPayload := fiber.Map{
-						"type":        "geofence_alert",
-						"alert_id":    cfg.ID,
-						"geofence_id": cfg.GeofenceID,
-						"vehicle_id":  req.VehicleID,
-						"event_type":  triggeredEventType,
-						"timestamp":   time.Now().Format(time.RFC3339),
-						"message":     "Vehicle " + req.VehicleID + " " + triggeredEventType + " geofence " + cfg.GeofenceID,
-					}
-					BroadcastAlertToUser(cfg.CreatedBy.String(), alertPayload)
-				}
-			}
-		}
-
-		// 5. Broadcast raw location to all frontend map clients
 		BroadcastAlertToAll(fiber.Map{
 			"type":       "location_update",
 			"vehicle_id": req.VehicleID,
 			"latitude":   req.Latitude,
 			"longitude":  req.Longitude,
-			"timestamp":  location.Timestamp.Format(time.RFC3339),
+			"timestamp":  time.Now().Format(time.RFC3339),
 		})
-
-		log.Printf("[WS Track] vehicle=%s lat=%.6f lng=%.6f entered=%v exited=%v",
-			req.VehicleID, req.Latitude, req.Longitude, enteredGeofences, exitedGeofences)
 	}
 }
-
 // WsAlertsHandler handles incoming websocket connections on /ws/alerts
 func WsAlertsHandler(c *websocket.Conn) {
 	token := c.Query("token")

@@ -13,6 +13,11 @@ func GetViolationHistory(c *fiber.Ctx) error {
 
 	start := time.Now()
 
+	userID, err := userIDFromRequest(c)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
+	}
+
 	vehicleID := c.Query("vehicle_id")
 	geofenceID := c.Query("geofence_id")
 	startDate := c.Query("start_date")
@@ -57,7 +62,8 @@ func GetViolationHistory(c *fiber.Ctx) error {
 			v.timestamp
 		`).
 		Joins("LEFT JOIN vehicles veh ON veh.id = v.vehicle_id").
-		Joins("LEFT JOIN geofences g ON g.id = v.geofence_id")
+		Joins("LEFT JOIN geofences g ON g.id = v.geofence_id").
+		Where("v.user_id = ?", userID)
 
 	if vehicleID != "" {
 		query = query.Where("v.vehicle_id = ?", vehicleID)
