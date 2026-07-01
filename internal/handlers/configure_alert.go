@@ -16,16 +16,19 @@ func ConfigureAlert(c *fiber.Ctx) error {
 
 	start := time.Now()
 
+	userID, err := userIDFromRequest(c)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
+	}
+
 	var req dto.ConfigureAlertRequest
 
 	if err := c.BodyParser(&req); err != nil {
-		//log.Printf("ConfigureAlert BodyParser error: %v, body: %s", err, string(c.Body()))
 		return c.Status(400).JSON(fiber.Map{
 			"error": "invalid request body: " + err.Error(),
 		})
 	}
 
-	// Validate event type
 	switch req.EventType {
 	case "entry", "exit", "both":
 	default:
@@ -34,37 +37,29 @@ func ConfigureAlert(c *fiber.Ctx) error {
 		})
 	}
 
-	// Check geofence exists
 	var geofence models.Geofence
-
 	if err := database.DB.
 		First(&geofence, "id = ?", req.GeofenceID).
 		Error; err != nil {
-
 		return c.Status(404).JSON(fiber.Map{
 			"error": "geofence not found",
 		})
 	}
 
-	// Optional vehicle validation
 	if req.VehicleID != nil {
-
 		var vehicle models.Vehicle
-
 		if err := database.DB.
 			First(&vehicle, "id = ?", *req.VehicleID).
 			Error; err != nil {
-
 			return c.Status(404).JSON(fiber.Map{
 				"error": "vehicle not found",
 			})
 		}
 	}
 
-	// Parse CreatedBy UUID
-	createdBy, err := uuid.Parse(req.CreatedBy)
+	createdBy, err := uuid.Parse(userID)
 	if err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": "invalid created_by UUID"})
+		return c.Status(400).JSON(fiber.Map{"error": "invalid user ID"})
 	}
 
 	alert := models.AlertConfig{
@@ -88,6 +83,34 @@ func ConfigureAlert(c *fiber.Ctx) error {
 		"event_type":  alert.EventType,
 		"status":      alert.Status,
 		"time_ns":     time.Since(start).Nanoseconds(),
+	})
+}
+
+func DeleteAlert(c *fiber.Ctx) error {
+
+	start := time.Now()
+
+	userID, err := userIDFromRequest(c)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
+	}
+
+	id := c.Params("id")
+	if id == "" {
+		return c.Status(400).JSON(fiber.Map{
+			"error": "Missing ID parameter",
+		})
+	}
+
+	if err := database.DB.
+		Where("id = ? AND created_by = ?", id, userID).
+		Delete(&models.AlertConfig{}).Error; err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.JSON(fiber.Map{
+		"message": "Alert deleted successfully",
+		"time_ns": time.Since(start).Nanoseconds(),
 	})
 }
 

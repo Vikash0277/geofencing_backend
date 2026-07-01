@@ -9,16 +9,16 @@ import (
 	"geofencing_backend/internal/services"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/google/uuid"
 )
 
 func CreateGeofence(c *fiber.Ctx) error {
 
+	userID, err := userIDFromRequest(c)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
+	}
+
 	var req dto.CreateGeofenceRequest
-
-	log.Println("CreatedBy RAW:", req.CreatedBy)
-	log.Println("coordinates", c.Body())
-
 
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(400).JSON(fiber.Map{
@@ -32,12 +32,6 @@ func CreateGeofence(c *fiber.Ctx) error {
 
 	wkt := services.BuildWKT(req.Coordinates)
 
-	// Parse CreatedBy UUID
-	createdBy, err := uuid.Parse(req.CreatedBy)
-	if err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": "invalid created_by UUID"})
-	}
-
 	start := time.Now()
 
 	// Insert using raw SQL with PostGIS ST_GeomFromText
@@ -46,7 +40,7 @@ func CreateGeofence(c *fiber.Ctx) error {
 		INSERT INTO geofences (id, created_at, updated_at, name, description, category, status, created_by, polygon)
 		VALUES (gen_random_uuid(), NOW(), NOW(), ?, ?, ?, ?, ?, ST_GeomFromText(?, 4326))
 		RETURNING id
-	`, req.Name, req.Description, req.Category, "active", createdBy, wkt).Scan(&newID).Error
+	`, req.Name, req.Description, req.Category, "active", userID, wkt).Scan(&newID).Error
 
 	if err != nil {
 		log.Println("error", err.Error())

@@ -5,7 +5,6 @@ type CreateGeofenceRequest struct {
 	Description string       `json:"description"`
 	Category    string       `json:"category"`
 	Coordinates [][2]float64 `json:"coordinates"`
-	CreatedBy   string       `json:"created_by"`
 }
 
 type GeofenceResponse struct {

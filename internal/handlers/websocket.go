@@ -214,9 +214,16 @@ func WsTrackLocationHandler(c *websocket.Conn) {
 
 // WsAlertsHandler handles incoming websocket connections on /ws/alerts
 func WsAlertsHandler(c *websocket.Conn) {
-	userID := c.Query("user_id")
-	if userID == "" {
-		log.Println("WebSocket connection rejected: missing user_id")
+	token := c.Query("token")
+	if token == "" {
+		log.Println("WebSocket connection rejected: missing token")
+		c.Close()
+		return
+	}
+
+	userID, err := userIDFromToken(token)
+	if err != nil {
+		log.Println("WebSocket connection rejected: invalid token")
 		c.Close()
 		return
 	}
@@ -227,7 +234,6 @@ func WsAlertsHandler(c *websocket.Conn) {
 		c.Close()
 	}()
 
-	// Keep connection alive, listen for close or incoming messages
 	for {
 		if _, _, err := c.ReadMessage(); err != nil {
 			break

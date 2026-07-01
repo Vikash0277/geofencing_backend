@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -20,6 +21,43 @@ import (
 )
 
 var googleOauthConfig *oauth2.Config
+
+func userIDFromToken(tokenString string) (string, error) {
+	secret := os.Getenv("JWT_SECRET")
+	if secret == "" {
+		secret = "default_secret"
+	}
+
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return []byte(secret), nil
+	})
+	if err != nil {
+		return "", err
+	}
+
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok || !token.Valid {
+		return "", fmt.Errorf("invalid token")
+	}
+
+	userID, ok := claims["user_id"].(string)
+	if !ok {
+		return "", fmt.Errorf("user_id not found in token")
+	}
+
+	return userID, nil
+}
+
+func userIDFromRequest(c *fiber.Ctx) (string, error) {
+	authorization := c.Get("Authorization")
+	if !strings.HasPrefix(authorization, "Bearer ") {
+		return "", fmt.Errorf("missing bearer token")
+	}
+	return userIDFromToken(strings.TrimPrefix(authorization, "Bearer "))
+}
 
 func InitOauthConfig() {
 	googleOauthConfig = &oauth2.Config{
