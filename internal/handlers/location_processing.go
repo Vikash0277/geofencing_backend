@@ -174,10 +174,35 @@ func processVehicleLocation(req dto.UpdateLocationRequest, timestamp time.Time) 
 			return nil
 		}
 
+		affected := make([]string, 0, len(events))
+		for id := range events {
+			affected = append(affected, id)
+		}
+
+		type geofenceInfo struct {
+			ID        string
+			Name      string
+			Category  string
+			CreatedBy string
+		}
+		var gfInfos []geofenceInfo
+		if err := tx.Table("geofences").
+			Select("id, name, category, created_by").
+			Where("id IN ?", affected).
+			Scan(&gfInfos).Error; err != nil {
+			return err
+		}
+		gfInfoMap := make(map[string]geofenceInfo, len(gfInfos))
+		for _, info := range gfInfos {
+			gfInfoMap[info.ID] = info
+		}
+
 		for geofenceID, eventType := range events {
+			gfInfo := gfInfoMap[geofenceID]
 			violation := models.Violation{
 				VehicleID:  req.VehicleID,
 				GeofenceID: geofenceID,
+				UserID:     gfInfo.CreatedBy,
 				EventType:  eventType,
 				Latitude:   req.Latitude,
 				Longitude:  req.Longitude,
@@ -186,28 +211,6 @@ func processVehicleLocation(req dto.UpdateLocationRequest, timestamp time.Time) 
 			if err := tx.Create(&violation).Error; err != nil {
 				return err
 			}
-		}
-
-		affected := make([]string, 0, len(events))
-		for id := range events {
-			affected = append(affected, id)
-		}
-
-		type geofenceInfo struct {
-			ID       string
-			Name     string
-			Category string
-		}
-		var gfInfos []geofenceInfo
-		if err := tx.Table("geofences").
-			Select("id, name, category").
-			Where("id IN ?", affected).
-			Scan(&gfInfos).Error; err != nil {
-			return err
-		}
-		gfInfoMap := make(map[string]geofenceInfo, len(gfInfos))
-		for _, info := range gfInfos {
-			gfInfoMap[info.ID] = info
 		}
 
 		var configs []models.AlertConfig

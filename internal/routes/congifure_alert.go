@@ -14,14 +14,9 @@ func ConfigureAlertRoutes(app *fiber.App) {
 		"/alerts/configure",
 		handlers.ConfigureAlert,
 	)
-
+	
 	api.Get(
 		"/alerts",
 		handlers.GetAlerts,
 	)
-
-	api.Delete(
-		"/alerts/:id",
-		handlers.DeleteAlert,
-	)
-}
+}	

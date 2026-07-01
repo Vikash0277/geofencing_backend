@@ -30,5 +30,4 @@ func GetAlertsRoutes(app *fiber.App) {
 		"/alerts",
 		handlers.GetAlerts,
 	)
-	api.Get("/alert-events", handlers.GetAlertEvents)
 }

@@ -61,12 +61,8 @@ func ConfigureAlert(c *fiber.Ctx) error {
 		}
 	}
 
-	// Derive ownership from the authenticated user, not the request body.
-	authenticatedUserID, err := userIDFromRequest(c)
-	if err != nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
-	}
-	createdBy, err := uuid.Parse(authenticatedUserID)
+	// Parse CreatedBy UUID
+	createdBy, err := uuid.Parse(req.CreatedBy)
 	if err != nil {
 		return c.Status(400).JSON(fiber.Map{"error": "invalid created_by UUID"})
 	}
@@ -95,41 +91,5 @@ func ConfigureAlert(c *fiber.Ctx) error {
 	})
 }
 
-func DeleteAlert(c *fiber.Ctx) error {
-	id := c.Params("id")
-	if id == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "Missing ID parameter",
-		})
-	}
 
-	alertID, err := uuid.Parse(id)
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "invalid alert ID",
-		})
-	}
 
-	authenticatedUserID, err := userIDFromRequest(c)
-	if err != nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
-	}
-
-	result := database.DB.
-		Where("id = ? AND created_by = ?", alertID, authenticatedUserID).
-		Delete(&models.AlertConfig{})
-	if result.Error != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": result.Error.Error(),
-		})
-	}
-	if result.RowsAffected == 0 {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"error": "alert rule not found",
-		})
-	}
-
-	return c.JSON(fiber.Map{
-		"message": "Alert rule deleted successfully",
-	})
-}
