@@ -32,11 +32,9 @@ func BuildPolygon(coords [][2]float64) (*geom.Polygon, error) {
         points = append(points, geom.Coord{lng, lat})
     }
     poly := geom.NewPolygon(geom.XY)
-    // SetCoords may return an error if layout mismatches
     if p, err := poly.SetCoords([][]geom.Coord{points}); err != nil {
         return nil, err
     } else {
-        // Set SRID to 4326 (WGS84) so EWKB includes SRID for PostGIS
         p.SetSRID(4326)
         return p, nil
     }

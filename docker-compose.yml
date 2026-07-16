@@ -27,11 +27,11 @@ services:
       - "3001:3001"
     environment:
       - DATABASE_URL=postgres://postgres:password@db:5432/geofencing?sslmode=disable
-      - MIGRATION=false
+      - MIGRATION=true
       - JWT_SECRET=Vikash0277
       - GOOGLE_CLIENT_ID=1082271042683-g2cvr5s6d8i32ddu0pu0149dbaa63bb1.apps.googleusercontent.com
       - GOOGLE_CLIENT_SECRET=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
-      - GOOGLE_REDIRECT_URL=http://localhost:3001/auth/google/callback
+      - GOOGLE_REDIRECT_URL=http://localhost:3001/api/v1/auth/google/callback
       - FRONTEND_URL=http://localhost:5173
     depends_on:
       db:
